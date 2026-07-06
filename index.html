@@ -11,6 +11,38 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <!-- Babel CDN -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAz3RZHai8RzBTkboSJbgHIZmr8tbZfDsE",
+            authDomain: "time-38f11.firebaseapp.com",
+            projectId: "time-38f11",
+            storageBucket: "time-38f11.firebasestorage.app",
+            messagingSenderId: "94195914354",
+            appId: "1:94195914354:web:1b27d4ffec6efd792094eb"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const fsdb = getFirestore(app);
+
+        window.firestoreGet = async (date) => {
+            const ref = doc(fsdb, 'timebox', date);
+            const snap = await getDoc(ref);
+            return snap.exists() ? snap.data() : null;
+        };
+
+        window.firestoreSet = async (date, data) => {
+            const ref = doc(fsdb, 'timebox', date);
+            await setDoc(ref, data);
+        };
+
+        window.firebaseReady = true;
+        window.dispatchEvent(new Event('firebaseReady'));
+    </script>
     
     <style>
         /* 프린트 스타일 최적화 */
@@ -125,79 +157,73 @@
             const [priorityDraggingIndex, setPriorityDraggingIndex] = useState(null);
             const [paintAction, setPaintAction] = useState(null); // 'paint' | 'erase'
             const [isPainting, setIsPainting] = useState(false);
+            const [isSaving, setIsSaving] = useState(false);
+            const [isLoadingDate, setIsLoadingDate] = useState(false);
 
             // 로딩 세션 가드
             const isInitialMount = useRef(true);
 
-            // 로컬스토리지 복원
+            // 날짜 전환 감지 → Firestore에서 불러오기
             useEffect(() => {
-                const savedDb = localStorage.getItem('timebox_master_db_v4');
-                if (savedDb) {
+                if (!date) return;
+                const selectedDate = new Date(date);
+                const day = selectedDate.getDay();
+                const mapped = day === 0 ? 6 : day - 1;
+                setSelectedDayIndex(mapped);
+
+                const loadFromFirestore = async () => {
+                    setIsLoadingDate(true);
                     try {
-                        const parsed = JSON.parse(savedDb);
-                        // 각 날짜의 timeBox를 신버전으로 마이그레이션
-                        const migrated = Object.fromEntries(
-                            Object.entries(parsed).map(([d, val]) => [
-                                d,
-                                { ...val, timeBox: val.timeBox ? migrateTimeBox(val.timeBox) : createEmptyTimeBox() }
-                            ])
-                        );
-                        setDb(migrated);
-                    } catch (e) {
-                        console.error("로컬 스토리지 복원 실패", e);
-                    }
-                }
-                isInitialMount.current = false;
-            }, []);
-
-            // 로컬스토리지 자동 누적 저장
-            useEffect(() => {
-                if (!isInitialMount.current) {
-                    localStorage.setItem('timebox_master_db_v4', JSON.stringify(db));
-                }
-            }, [db]);
-
-            // 날짜 전환 감지 및 데이터 교체 적용
-            useEffect(() => {
-                if (date) {
-                    const selectedDate = new Date(date);
-                    const day = selectedDate.getDay();
-                    const mapped = day === 0 ? 6 : day - 1;
-                    setSelectedDayIndex(mapped);
-
-                    const dayData = db[date];
-                    if (dayData) {
-                        // 혹시 과거 3개 슬롯 버전 데이터가 존재할 시 하위호환성용 5개로 정렬 보완
-                        const paddedPriorities = dayData.topPriorities ? [...dayData.topPriorities] : [];
-                        while (paddedPriorities.length < 5) {
-                            paddedPriorities.push({ id: `priority-${paddedPriorities.length + 1}-${Date.now()}`, text: '', checked: false });
+                        const dayData = await window.firestoreGet(date);
+                        if (dayData) {
+                            const paddedPriorities = dayData.topPriorities ? [...dayData.topPriorities] : [];
+                            while (paddedPriorities.length < 5) {
+                                paddedPriorities.push({ id: `priority-${paddedPriorities.length + 1}-${Date.now()}`, text: '', checked: false });
+                            }
+                            setTopPriorities(paddedPriorities.slice(0, 5));
+                            setBrainDump(dayData.brainDump || []);
+                            setTimeBox(migrateTimeBox(dayData.timeBox || createEmptyTimeBox()));
+                        } else {
+                            setTopPriorities([
+                                { id: 'priority-1', text: '', checked: false },
+                                { id: 'priority-2', text: '', checked: false },
+                                { id: 'priority-3', text: '', checked: false },
+                                { id: 'priority-4', text: '', checked: false },
+                                { id: 'priority-5', text: '', checked: false },
+                            ]);
+                            setBrainDump([]);
+                            setTimeBox(createEmptyTimeBox());
                         }
-                        setTopPriorities(paddedPriorities.slice(0, 5));
-                        setBrainDump(dayData.brainDump || []);
-                        setTimeBox(migrateTimeBox(dayData.timeBox || createEmptyTimeBox()));
-                    } else {
-                        setTopPriorities([
-                            { id: 'priority-1', text: '', checked: false },
-                            { id: 'priority-2', text: '', checked: false },
-                            { id: 'priority-3', text: '', checked: false },
-                            { id: 'priority-4', text: '', checked: false },
-                            { id: 'priority-5', text: '', checked: false },
-                        ]);
-                        setBrainDump([]);
-                        setTimeBox(createEmptyTimeBox());
+                    } catch(e) {
+                        console.error('Firestore 불러오기 실패', e);
+                    } finally {
+                        setIsLoadingDate(false);
+                        isInitialMount.current = false;
                     }
-                }
-            }, [date, db]);
+                };
 
-            const saveCurrentDayToDb = (updatedPriorities, updatedBrainDump, updatedTimeBox) => {
-                setDb(prev => ({
-                    ...prev,
-                    [date]: {
-                        topPriorities: updatedPriorities || topPriorities,
-                        brainDump: updatedBrainDump || brainDump,
-                        timeBox: updatedTimeBox || timeBox
-                    }
-                }));
+                if (window.firebaseReady) {
+                    loadFromFirestore();
+                } else {
+                    window.addEventListener('firebaseReady', loadFromFirestore, { once: true });
+                }
+            }, [date]);
+
+            const saveCurrentDayToDb = async (updatedPriorities, updatedBrainDump, updatedTimeBox) => {
+                if (!date || isInitialMount.current) return;
+                const data = {
+                    topPriorities: updatedPriorities || topPriorities,
+                    brainDump: updatedBrainDump || brainDump,
+                    timeBox: updatedTimeBox || timeBox
+                };
+                setIsSaving(true);
+                try {
+                    await window.firestoreSet(date, data);
+                } catch(e) {
+                    console.error('Firestore 저장 실패', e);
+                } finally {
+                    setIsSaving(false);
+                }
             };
 
             const handleAddBrainDump = (e) => {
@@ -468,18 +494,24 @@
             // 전체 저장소 초기화
             const handleClearAllHistory = () => {
                 if (window.confirm('🔥 경고: 저장된 모든 날짜의 누적 기록이 영구 삭제됩니다. 진행하시겠습니까?')) {
-                    setDb({});
                     setTopPriorities(DEFAULT_PRIORITIES);
                     setBrainDump([]);
                     setTimeBox(createEmptyTimeBox());
-                    localStorage.removeItem('timebox_master_db_v4');
-                    alert('모든 히스토리가 성공적으로 초기화되었습니다!');
+                    alert('현재 날짜 데이터가 초기화되었습니다. Firestore 데이터는 Firebase 콘솔에서 삭제하세요.');
                 }
             };
 
             return (
                 <div className="min-h-screen p-4 md:p-8 font-sans transition-all duration-300">
                     
+                    {/* 저장/로딩 상태 인디케이터 */}
+                    {(isSaving || isLoadingDate) && (
+                        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-white border border-stone-200 shadow-lg rounded-full px-4 py-2 text-xs font-bold text-stone-600 print-hide">
+                            <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                            {isLoadingDate ? '불러오는 중...' : '저장 중...'}
+                        </div>
+                    )}
+
                     {/* 상단 툴바 (인쇄 시 자동 숨김) */}
                     <div className="max-w-6xl mx-auto mb-6 bg-white p-4 rounded-xl shadow-md border border-stone-200 flex flex-wrap items-center justify-between gap-4 print-hide">
                         <div className="flex flex-wrap items-center gap-3">
@@ -855,7 +887,7 @@
                         </div>
 
                         <footer className="mt-12 pt-6 border-t border-stone-200 text-center text-xs text-stone-400 font-semibold flex flex-col sm:flex-row items-center justify-between gap-4">
-                            <p>© ELON MUSK TIMEBOXING METHOD. ALL RECORDS RETAINED ON LOCAL STORAGE.</p>
+                            <p>© ELON MUSK TIMEBOXING METHOD. ALL RECORDS SYNCED TO FIREBASE FIRESTORE.</p>
                             <div className="flex gap-4">
                                 <span>📁 날짜 변경 시 모든 하루 일과 데이터가 개별 누적 저장됩니다.</span>
                             </div>
