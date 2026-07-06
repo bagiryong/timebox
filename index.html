@@ -12,11 +12,10 @@
     <!-- Babel CDN -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Firebase SDK -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
-
+    <!-- Firebase SDK (compat 버전 - Babel과 호환) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <script>
         const firebaseConfig = {
             apiKey: "AIzaSyAz3RZHai8RzBTkboSJbgHIZmr8tbZfDsE",
             authDomain: "time-38f11.firebaseapp.com",
@@ -26,18 +25,16 @@
             appId: "1:94195914354:web:1b27d4ffec6efd792094eb"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const fsdb = getFirestore(app);
+        firebase.initializeApp(firebaseConfig);
+        const fsdb = firebase.firestore();
 
         window.firestoreGet = async (date) => {
-            const ref = doc(fsdb, 'timebox', date);
-            const snap = await getDoc(ref);
-            return snap.exists() ? snap.data() : null;
+            const snap = await fsdb.collection('timebox').doc(date).get();
+            return snap.exists ? snap.data() : null;
         };
 
         window.firestoreSet = async (date, data) => {
-            const ref = doc(fsdb, 'timebox', date);
-            await setDoc(ref, data);
+            await fsdb.collection('timebox').doc(date).set(data);
         };
 
         window.firebaseReady = true;
